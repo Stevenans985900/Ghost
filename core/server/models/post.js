@@ -5,7 +5,6 @@ var _               = require('lodash'),
     Promise         = require('bluebird'),
     sequence        = require('../utils/sequence'),
     errors          = require('../errors'),
-    legacyConverter = require('../utils/markdown-converter'),
     htmlToText      = require('html-to-text'),
     ghostBookshelf  = require('./base'),
     events          = require('../events'),
@@ -20,13 +19,16 @@ Post = ghostBookshelf.Model.extend({
 
     tableName: 'posts',
 
-    emitChange: function emitChange(event, usePreviousResourceType) {
+    emitChange: function emitChange(event, options) {
+        options = options || {};
+
         var resourceType = this.get('page') ? 'page' : 'post';
-        if (usePreviousResourceType) {
+
+        if (options.usePreviousResourceType) {
             resourceType = this.updated('page') ? 'page' : 'post';
         }
 
-        events.emit(resourceType + '.' + event, this);
+        events.emit(resourceType + '.' + event, this, options);
     },
 
     defaults: function defaults() {
@@ -47,7 +49,7 @@ Post = ghostBookshelf.Model.extend({
         model.emitChange('added');
 
         if (['published', 'scheduled'].indexOf(status) !== -1) {
-            model.emitChange(status);
+            model.emitChange(status, {importing: options.importing});
         }
 
         return this.updateTags(model, response, options);
@@ -87,14 +89,14 @@ Post = ghostBookshelf.Model.extend({
         // Handle added and deleted for post -> page or page -> post
         if (model.resourceTypeChanging) {
             if (model.wasPublished) {
-                model.emitChange('unpublished', true);
+                model.emitChange('unpublished', {usePreviousResourceType: true});
             }
 
             if (model.wasScheduled) {
-                model.emitChange('unscheduled', true);
+                model.emitChange('unscheduled', {usePreviousResourceType: true});
             }
 
-            model.emitChange('deleted', true);
+            model.emitChange('deleted', {usePreviousResourceType: true});
             model.emitChange('added');
 
             if (model.isPublished) {
@@ -176,7 +178,7 @@ Post = ghostBookshelf.Model.extend({
             publishedAt = this.get('published_at'),
             publishedAtHasChanged = this.hasDateChanged('published_at', {beforeWrite: true}),
             mobiledoc   = this.get('mobiledoc'),
-            tags = [], ops = [];
+            tags = [], ops = [], markdown, html;
 
         // CASE: disallow published -> scheduled
         // @TODO: remove when we have versioning based on updated_at
@@ -231,10 +233,11 @@ Post = ghostBookshelf.Model.extend({
         ghostBookshelf.Model.prototype.onSaving.call(this, model, attr, options);
 
         if (mobiledoc) {
-            this.set('html', utils.mobiledocConverter.render(JSON.parse(mobiledoc)));
-        } else {
-            // legacy markdown mode
-            this.set('html', legacyConverter.render(_.toString(this.get('markdown'))));
+            // NOTE: using direct markdown parsing through markdown-it for now,
+            // mobiledoc's use of SimpleDom is very fragile with certain HTML
+            markdown = JSON.parse(mobiledoc).cards[0][1].markdown;
+            html = utils.markdownConverter.render(markdown);
+            this.set('html', '<div class="kg-card-markdown">' + html + '</div>');
         }
 
         if (this.hasChanged('html') || !this.get('plaintext')) {
@@ -250,8 +253,10 @@ Post = ghostBookshelf.Model.extend({
         }
 
         // disabling sanitization until we can implement a better version
-        title = this.get('title') || i18n.t('errors.models.post.untitled');
-        this.set('title', _.toString(title).trim());
+        if (!options.importing) {
+            title = this.get('title') || i18n.t('errors.models.post.untitled');
+            this.set('title', _.toString(title).trim());
+        }
 
         // ### Business logic for published_at and published_by
         // If the current status is 'published' and published_at is not set, set it to now
@@ -472,20 +477,61 @@ Post = ghostBookshelf.Model.extend({
     defaultColumnsToFetch: function defaultColumnsToFetch() {
         return ['id', 'published_at', 'slug', 'author_id'];
     },
+    /**
+     * If the `formats` option is not used, we return `html` be default.
+     * Otherwise we return what is requested e.g. `?formats=mobiledoc,plaintext`
+     */
+    formatsToJSON: function formatsToJSON(attrs, options) {
+        var defaultFormats = ['html'],
+            formatsToKeep = options.formats || defaultFormats;
+
+        // Iterate over all known formats, and if they are not in the keep list, remove them
+        _.each(Post.allowedFormats, function (format) {
+            if (formatsToKeep.indexOf(format) === -1) {
+                delete attrs[format];
+            }
+        });
+
+        return attrs;
+    },
 
     toJSON: function toJSON(options) {
         options = options || {};
 
-        var attrs = ghostBookshelf.Model.prototype.toJSON.call(this, options);
+        var attrs = ghostBookshelf.Model.prototype.toJSON.call(this, options),
+            oldPostId = attrs.amp,
+            commentId;
+
+        attrs = this.formatsToJSON(attrs, options);
 
         if (!options.columns || (options.columns && options.columns.indexOf('author') > -1)) {
             attrs.author = attrs.author || attrs.author_id;
             delete attrs.author_id;
         }
+        // If the current column settings allow it...
+        if (!options.columns || (options.columns && options.columns.indexOf('primary_tag') > -1)) {
+            // ... attach a computed property of primary_tag which is the first tag or null
+            attrs.primary_tag = attrs.tags && attrs.tags.length > 0 ? attrs.tags[0] : null;
+        }
 
         if (!options.columns || (options.columns && options.columns.indexOf('url') > -1)) {
             attrs.url = utils.url.urlPathForPost(attrs);
         }
+
+        if (oldPostId) {
+            oldPostId = Number(oldPostId);
+
+            if (isNaN(oldPostId)) {
+                commentId = attrs.id;
+            } else {
+                commentId = oldPostId;
+            }
+        } else {
+            commentId = attrs.id;
+        }
+
+        // NOTE: we remember the old post id because of disqus
+        attrs.comment_id = commentId;
 
         return attrs;
     },
@@ -500,6 +546,8 @@ Post = ghostBookshelf.Model.extend({
         return this.isPublicContext() ? 'page:false' : 'page:false+status:published';
     }
 }, {
+    allowedFormats: ['mobiledoc', 'html', 'plaintext', 'amp'],
+
     orderDefaultOptions: function orderDefaultOptions() {
         return {
             status: 'ASC',
@@ -574,6 +622,9 @@ Post = ghostBookshelf.Model.extend({
                 findAll: ['columns', 'filter', 'forUpdate'],
                 edit: ['forUpdate']
             };
+
+        // The post model additionally supports having a formats option
+        options.push('formats');
 
         if (validOptions[methodName]) {
             options = options.concat(validOptions[methodName]);

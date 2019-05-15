@@ -4,7 +4,6 @@ module.exports = {
         uuid: {type: 'string', maxlength: 36, nullable: false, validations: {isUUID: true}},
         title: {type: 'string', maxlength: 2000, nullable: false},
         slug: {type: 'string', maxlength: 191, nullable: false, unique: true},
-        markdown: {type: 'text', maxlength: 1000000000, fieldtype: 'long', nullable: true},
         mobiledoc: {type: 'text', maxlength: 1000000000, fieldtype: 'long', nullable: true},
         html: {type: 'text', maxlength: 1000000000, fieldtype: 'long', nullable: true},
         amp: {type: 'text', maxlength: 1000000000, fieldtype: 'long', nullable: true},
@@ -13,7 +12,7 @@ module.exports = {
         featured: {type: 'bool', nullable: false, defaultTo: false},
         page: {type: 'bool', nullable: false, defaultTo: false},
         status: {type: 'string', maxlength: 50, nullable: false, defaultTo: 'draft'},
-        language: {type: 'string', maxlength: 6, nullable: false, defaultTo: 'en_US'},
+        locale: {type: 'string', maxlength: 6, nullable: true},
         visibility: {type: 'string', maxlength: 50, nullable: false, defaultTo: 'public', validations: {isIn: [['public']]}},
         meta_title: {type: 'string', maxlength: 2000, nullable: true},
         meta_description: {type: 'string', maxlength: 2000, nullable: true},
@@ -23,7 +22,10 @@ module.exports = {
         updated_at: {type: 'dateTime', nullable: true},
         updated_by: {type: 'string', maxlength: 24, nullable: true},
         published_at: {type: 'dateTime', nullable: true},
-        published_by: {type: 'string', maxlength: 24, nullable: true}
+        published_by: {type: 'string', maxlength: 24, nullable: true},
+        custom_excerpt: {type: 'string', maxlength: 2000, nullable: true, validations: {isLength: {max: 300}}},
+        codeinjection_head: {type: 'text', maxlength: 65535, nullable: true},
+        codeinjection_foot: {type: 'text', maxlength: 65535, nullable: true}
     },
     users: {
         id: {type: 'string', maxlength: 24, nullable: false, primary: true},
@@ -42,7 +44,7 @@ module.exports = {
         twitter: {type: 'string', maxlength: 2000, nullable: true},
         accessibility: {type: 'text', maxlength: 65535, nullable: true},
         status: {type: 'string', maxlength: 50, nullable: false, defaultTo: 'active'},
-        language: {type: 'string', maxlength: 6, nullable: false, defaultTo: 'en_US'},
+        locale: {type: 'string', maxlength: 6, nullable: true},
         visibility: {type: 'string', maxlength: 50, nullable: false, defaultTo: 'public', validations: {isIn: [['public']]}},
         meta_title: {type: 'string', maxlength: 2000, nullable: true},
         meta_description: {type: 'string', maxlength: 2000, nullable: true},
