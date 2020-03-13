@@ -120,7 +120,7 @@
     "jshint": "2.9.5",
     "jshint-stylish": "2.2.1",
     "matchdep": "1.0.1",
-    "minimist": "1.2.0",
+    "minimist": "1.2.5",
     "mocha": "3.4.2",
     "nock": "9.0.13",
     "rewire": "2.5.2",
